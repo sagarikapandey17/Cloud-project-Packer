@@ -1,0 +1,266 @@
+name: Autograding Tests
+on:
+  workflow_run:
+    workflows: [Continuous Deploy]
+    types:
+      - completed
+
+permissions:
+  checks: write
+  actions: read
+  contents: read
+
+jobs:
+  assignment-grader:
+    runs-on: ubuntu-latest
+    environment:
+      name: AWS_DEPLOYMENT
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Start Grading
+        run: echo "==== Start Grading Assignment02 ===="
+
+      - name: Download Grader Environment Variables
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          name: grader-env
+
+      - name: Set Grader Environment Variables
+        run: |
+          source grader-env.txt
+
+          echo "WEBAPP_EC2_HOST=$WEBAPP_HOST" >> $GITHUB_ENV
+          echo "WEBAPP_EC2_USER=$WEBAPP_USER" >> $GITHUB_ENV
+          echo "MYSQL_PRIVATE_IP=$MYSQL_PRIVATE_IP" >> $GITHUB_ENV
+          echo "DATABASE_USER_NAME=$DATABASE_USER_NAME" >> $GITHUB_ENV
+          echo "DATABASE_PASSWORD=$DATABASE_PASSWORD" >> $GITHUB_ENV
+
+          echo "MOVIE_INGEST_COMMAND=$MOVIE_INGEST_COMMAND" >> $GITHUB_ENV
+
+          echo "WEBAPP_INSTANCE_ID=$WEBAPP_INSTANCE_ID" >> $GITHUB_ENV
+          echo "WEBAPP_SG=$WEBAPP_SG" >> $GITHUB_ENV
+          echo "MYSQL_INSTANCE_ID=$MYSQL_INSTANCE_ID" >> $GITHUB_ENV
+          echo "MYSQL_SG=$MYSQL_SG" >> $GITHUB_ENV
+          echo "IGW_ID=$IGW_ID" >> $GITHUB_ENV
+          echo "PUBLIC_SUBNET_ID=$PUBLIC_SUBNET_ID" >> $GITHUB_ENV
+          echo "PRIVATE_SUBNET_ID=$PRIVATE_SUBNET_ID" >> $GITHUB_ENV
+          echo "ROUTE_TABLE_ID=$ROUTE_TABLE_ID" >> $GITHUB_ENV
+          echo "VPC_ID=$VPC_ID" >> $GITHUB_ENV
+
+      - name: Add SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+
+      - name: Golang Setup
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.23.3
+
+      - name: Build Grader
+        run: |
+          go build -o auto-grader ./grader/grader.go
+
+      - name: Send Grader to EC2 Instance
+        run: |
+          scp -o StrictHostKeyChecking=no ./auto-grader $WEBAPP_EC2_USER@$WEBAPP_EC2_HOST:./
+
+      - name: Execute Grader
+        run: |
+          ssh -o StrictHostKeyChecking=no $WEBAPP_EC2_USER@$WEBAPP_EC2_HOST << 'EOF'
+
+          echo "Connected to EC2 instance"
+
+          if [ ! -d /tmp/grader-result ]; then
+            mkdir /tmp/grader-result
+          fi
+
+          ./auto-grader > /tmp/grader-result/result.txt
+
+          EOF
+
+      - name: Copy Grading Result
+        run: |
+          scp -o StrictHostKeyChecking=no -r $WEBAPP_EC2_USER@$WEBAPP_EC2_HOST:/tmp/grader-result/result.txt ./grader_result.txt
+          echo "Grading result copied to local machine"
+
+      - name: Show Grading Result
+        run: |
+          cat ./grader_result.txt
+
+      - name: Grade 2A - Check Ok Status
+        id: grade-2a
+        uses: classroom-resources/autograding-command-grader@v1
+        with:
+          test-name: Check Ok Status
+          command: python3 ./grader/result_checker.py 2A
+          timeout: 10
+          max-score: 10
+
+      - name: Grade 2B - Check No Parameter
+        id: grade-2b
+        uses: classroom-resources/autograding-command-grader@v1
+        with:
+          test-name: Check No Parameter
+          command: python3 ./grader/result_checker.py 2B
+          timeout: 10
+          max-score: 10
+
+      - name: Grade 2C - Check Wrong Method
+        id: grade-2c
+        uses: classroom-resources/autograding-command-grader@v1
+        with:
+          test-name: Check Wrong Method
+          command: python3 ./grader/result_checker.py 2C
+          timeout: 10
+          max-score: 10
+
+      - name: Grade 3A - Database Connection
+        id: grade-3a
+        uses: classroom-resources/autograding-command-grader@v1
+        with:
+          test-name: Grade 3A - Database Connection
+          command: python3 ./grader/result_checker.py 3A
+          timeout: 10
+          max-score: 10
+
+      - name: Grade 4A - Authenticate Endpoint
+        id: grade-4a
+        uses: classroom-resources/autograding-command-grader@v1
+        with:
+          test-name: Grade 4A - Authenticate Endpoint
+          command: python3 ./grader/result_checker.py 4A
+          timeout: 10
+          max-score: 10
+
+      - name: Grade 4B - Movie Endpoint
+        id: grade-4b
+        uses: classroom-resources/autograding-command-grader@v1
+        with:
+          test-name: Grade 4B - Movie Endpoint
+          command: python3 ./grader/result_checker.py 4B
+          timeout: 10
+          max-score: 10
+
+      - name: Grade 4C - Rating Endpoint
+        id: grade-4c
+        uses: classroom-resources/autograding-command-grader@v1
+        with:
+          test-name: Grade 4C - Rating Endpoint
+          command: python3 ./grader/result_checker.py 4C
+          timeout: 10
+          max-score: 10
+
+      - name: Grade 4D - Link Endpoint
+        id: grade-4d
+        uses: classroom-resources/autograding-command-grader@v1
+        with:
+          test-name: Grade 4D - Link Endpoint
+          command: python3 ./grader/result_checker.py 4D
+          timeout: 10
+          max-score: 10
+
+      - name: Grade 4E - Unauthorized Endpoint
+        id: grade-4e
+        uses: classroom-resources/autograding-command-grader@v1
+        with:
+          test-name: Grade 4E - Unauthorized Endpoint
+          command: python3 ./grader/result_checker.py 4E
+          timeout: 10
+          max-score: 10
+        
+
+      - name: Autograding Reporter
+        uses: classroom-resources/autograding-grading-reporter@v1
+        env:
+          GRADE-2A_RESULTS: "${{steps.grade-2a.outputs.result}}"
+          GRADE-2B_RESULTS: "${{steps.grade-2b.outputs.result}}"
+          GRADE-2C_RESULTS: "${{steps.grade-2c.outputs.result}}"
+          GRADE-3A_RESULTS: "${{steps.grade-3a.outputs.result}}"
+          GRADE-4A_RESULTS: "${{steps.grade-4a.outputs.result}}"
+          GRADE-4B_RESULTS: "${{steps.grade-4b.outputs.result}}"
+          GRADE-4C_RESULTS: "${{steps.grade-4c.outputs.result}}"
+          GRADE-4D_RESULTS: "${{steps.grade-4d.outputs.result}}"
+          GRADE-4E_RESULTS: "${{steps.grade-4e.outputs.result}}"
+        with:
+          runners: grade-2a, grade-2b, grade-2c, grade-3a, grade-4a, grade-4b, grade-4c, grade-4d, grade-4e
+
+      - name: Configure AWS Credentialsg
+        uses: aws-actions/configure-aws-credentials@v2
+        if: always()
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+
+      - name: Terminate and Delete Aws Resources
+        if: always()
+        run: |
+          echo "Terminating and deleting all aws resources..."
+
+          # Terminate EC2 Instances
+          if [ -n "$WEBAPP_INSTANCE_ID" ]; then
+            echo "Terminating WebApp EC2 Instance: $WEBAPP_INSTANCE_ID"
+            aws ec2 terminate-instances --instance-ids $WEBAPP_INSTANCE_ID
+          fi
+
+          if [ -n "$MYSQL_INSTANCE_ID" ]; then
+            echo "Terminating MySQL EC2 Instance: $MYSQL_INSTANCE_ID"
+            aws ec2 terminate-instances --instance-ids $MYSQL_INSTANCE_ID
+          fi
+
+          # Wait for EC2 instances to terminate
+          echo "Waiting for instances to terminate..."
+          if [ -n "$WEBAPP_INSTANCE_ID" ]; then
+            aws ec2 wait instance-terminated --instance-ids $WEBAPP_INSTANCE_ID
+          fi
+          if [ -n "$MYSQL_INSTANCE_ID" ]; then
+            aws ec2 wait instance-terminated --instance-ids $MYSQL_INSTANCE_ID
+          fi
+
+          sleep 20
+
+          # Detach and Delete Internet Gateway
+          if [ -n "$IGW_ID" ]; then
+            echo "Detaching and deleting Internet Gateway: $IGW_ID"
+            aws ec2 detach-internet-gateway --internet-gateway-id $IGW_ID --vpc-id $VPC_ID
+            aws ec2 delete-internet-gateway --internet-gateway-id $IGW_ID
+          fi
+
+          # Delete Security Groups
+          if [ -n "$MYSQL_SG" ]; then
+            echo "Deleting MySQL Security Group: $MYSQL_SG"
+            aws ec2 delete-security-group --group-id $MYSQL_SG
+          fi
+          if [ -n "$WEBAPP_SG" ]; then
+            echo "Deleting WebApp Security Group: $WEBAPP_SG"
+            aws ec2 delete-security-group --group-id $WEBAPP_SG
+          fi
+          
+          # Delete Subnets
+          if [ -n "$PUBLIC_SUBNET_ID" ]; then
+            echo "Deleting Public Subnet: $PUBLIC_SUBNET_ID"
+            aws ec2 delete-subnet --subnet-id $PUBLIC_SUBNET_ID
+          fi
+          if [ -n "$PRIVATE_SUBNET_ID" ]; then
+            echo "Deleting Private Subnet: $PRIVATE_SUBNET_ID"
+            aws ec2 delete-subnet --subnet-id $PRIVATE_SUBNET_ID
+          fi
+
+          # Delete Route Table
+          if [ -n "$ROUTE_TABLE_ID" ]; then
+            echo "Deleting Route Table: $ROUTE_TABLE_ID"
+            aws ec2 delete-route-table --route-table-id $ROUTE_TABLE_ID
+          fi
+
+          # Delete VPC
+          if [ -n "$VPC_ID" ]; then
+            echo "Deleting VPC: $VPC_ID"
+            aws ec2 delete-vpc --vpc-id $VPC_ID
+          fi
+
+          echo "All resources have been terminated and deleted."

@@ -1,0 +1,26 @@
+[Unit]
+Description=Health Check Service
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/environment.d/health-check.conf
+Environment="MYSQL_IP=${MYSQL_IP}"
+Environment="MYSQL_USER=${MYSQL_USER}"
+Environment="MYSQL_PASS=${MYSQL_PASS}"
+ExecStart=/usr/bin/authbind --deep java \
+                            -Dserver.port=80 \
+                            -Dspring.datasource.url=jdbc:mysql://${MYSQL_IP}:3306/recommend \
+                            -Dspring.datasource.username=${MYSQL_USER} \
+                            -Dspring.datasource.password=${MYSQL_PASS} \
+                            -jar /opt/health-check/health-check.jar
+WorkingDirectory=/opt/health-check
+StandardOutput=journal
+StandardError=journal
+Restart=always
+RestartSec=5
+User=ubuntu
+Group=ubuntu
+
+[Install]
+WantedBy=multi-user.target
